@@ -1,5 +1,5 @@
 static const char my_name[] = "akb_cc";
-static const char version[] = "Version 1.0.1";
+static const char version[] = "Version 1.2.0";
 static const char subject[] = "AKB Binary builder";
 static const char cpright[] = "Copyright (c) 2018";
 static const struct { const char * f, * s, * e; }
@@ -78,6 +78,7 @@ static const char * help[] = {
 #define SIZE 4096
 
 static char * file;
+static char * file2;
 static char   date[21];
 static char * mail = "Please contact your provider";
 static char   rlax[1];
@@ -93,7 +94,10 @@ static const char DEBUGEXEC_line[] =
 static int DEBUGEXEC_flag;
 static const char TRACEABLE_line[] =
 "#define TRACEABLE	%d	/* Define as 1 to enable ptrace the executable */\n";
-static int TRACEABLE_flag;
+static int TRACEABLE_flag=1;
+static const char BUSYBOXON_line[] =
+"#define BUSYBOXON	%d	/* Define as 1 to enable work with busybox */\n";
+static int BUSYBOXON_flag;
 
 static const char * RTC[] = {
 "",
@@ -211,6 +215,8 @@ static const char * RTC[] = {
 "		*argv = argv[1];",
 "}",
 "",
+"void chkenv_end(void);",
+"",
 "int chkenv(int argc)",
 "{",
 "	char buff[512];",
@@ -219,8 +225,12 @@ static const char * RTC[] = {
 "	char * string;",
 "	extern char ** environ;",
 "",
-"	mask  = (unsigned long)&chkenv;",
-"	mask ^= (unsigned long)getpid() * ~mask;",
+"	mask = (unsigned long)getpid();",
+"	stte_0();",
+"	 key(&chkenv, (void*)&chkenv_end - (void*)&chkenv);",
+"	 key(&data, sizeof(data));",
+"	 key(&mask, sizeof(mask));",
+"	arc4(&mask, sizeof(mask));",
 "	sprintf(buff, \"x%lx\", mask);",
 "	string = getenv(buff);",
 "#if DEBUGEXEC",
@@ -241,6 +251,8 @@ static const char * RTC[] = {
 "	}",
 "	return -1;",
 "}",
+"",
+"void chkenv_end(void){}",
 "",
 "#if !TRACEABLE",
 "",
@@ -300,7 +312,10 @@ static const char * RTC[] = {
 "	int ret, i, j;",
 "	char ** varg;",
 "	char * me = argv[0];",
+"	if (me == NULL) { me = getenv(\"_\"); }",
+"	if (me == 0) { fprintf(stderr, \"E: neither argv[0] nor $_ works.\"); exit(1); }",
 "",
+"	ret = chkenv(argc);",
 "	stte_0();",
 "	 key(pswd, pswd_z);",
 "	arc4(msg1, msg1_z);",
@@ -316,7 +331,6 @@ static const char * RTC[] = {
 "	arc4(chk1, chk1_z);",
 "	if ((chk1_z != tst1_z) || memcmp(tst1, chk1, tst1_z))",
 "		return tst1;",
-"	ret = chkenv(argc);",
 "	arc4(msg2, msg2_z);",
 "	if (ret < 0)",
 "		return msg2;",
@@ -351,7 +365,12 @@ static const char * RTC[] = {
 "		}",
 "	}",
 "	j = 0;",
+"#if BUSYBOXON",
+"	varg[j++] = \"busybox\";",
+"	varg[j++] = \"sh\";",
+"#else",
 "	varg[j++] = argv[0];		/* My own name at execution */",
+"#endif",
 "	if (ret && *opts)",
 "		varg[j++] = opts;	/* Options on 1st line of code */",
 "	if (*inlo)",
@@ -391,7 +410,7 @@ static const char * RTC[] = {
 static int parse_an_arg(int argc, char * argv[])
 {
 	extern char * optarg;
-	const char * opts = "e:m:f:i:x:l:rvDTCAh";
+	const char * opts = "e:m:f:i:x:l:o:rvDUCABh";
 	struct tm tmp[1];
 	time_t expdate;
 	int cnt, l;
@@ -437,6 +456,9 @@ static int parse_an_arg(int argc, char * argv[])
 	case 'l':
 		lsto = optarg;
 		break;
+	case 'o':
+		file2 = optarg;
+		break;
 	case 'r':
 		rlax[0]++;
 		break;
@@ -446,8 +468,8 @@ static int parse_an_arg(int argc, char * argv[])
 	case 'D':
 		DEBUGEXEC_flag = 1;
 		break;
-	case 'T':
-		TRACEABLE_flag = 1;
+	case 'U':
+		TRACEABLE_flag = 0;
 		break;
 	case 'C':
 		fprintf(stderr, "%s %s, %s\n", my_name, version, subject);
@@ -481,6 +503,9 @@ static int parse_an_arg(int argc, char * argv[])
 			return -1;
 		}
 		return 0;
+	case 'B':
+		BUSYBOXON_flag = 1;
+		break;
 	case ':':
 		fprintf(stderr, "%s parse: Missing parameter\n", my_name);
 		return -1;
@@ -612,6 +637,7 @@ struct {
 	{ "rc",   "-c", "",   "builtin exec %s $*" },
 	{ "sh",   "-c", "",   "exec '%s' \"$@\"" }, /* IRIX_nvi */
 	{ "bash", "-c", "",   "exec '%s' \"$@\"" },
+	{ "zsh",  "-c", "",   "exec '%s' \"$@\"" },
 	{ "bsh",  "-c", "",   "exec '%s' \"$@\"" }, /* AIX_nvi */
 	{ "Rsh",  "-c", "",   "exec '%s' \"$@\"" }, /* AIX_nvi */
 	{ "ksh",  "-c", "",   "exec '%s' \"$@\"" }, /* OK on Solaris, AIX and Linux (THX <bryan.hogan@dstintl.com>) */
@@ -895,6 +921,7 @@ int write_C(char * file, char * argv[])
 	fprintf(o, "#define      %s_z	%d\n", "hide", 1<<12);
 	fprintf(o, DEBUGEXEC_line, DEBUGEXEC_flag);
 	fprintf(o, TRACEABLE_line, TRACEABLE_flag);
+    fprintf(o, BUSYBOXON_line, BUSYBOXON_flag);
 	for (indx = 0; RTC[indx]; indx++)
 		fprintf(o, "%s\n", RTC[indx]);
 	fflush(o);
@@ -914,15 +941,22 @@ int make(void)
 	cflags = getenv("CFLAGS");
 	if (!cflags)
 		cflags = "";
-	sprintf(cmd, "%s %s %s.x.c -o %s.x", cc, cflags, file, file);
+
+if(!file2){
+file2=(char*)realloc(file2,strlen(file)+3);
+strcpy(file2,file);
+file2=strcat(file2,".x");
+
+}
+	sprintf(cmd, "%s %s %s.x.c -o %s", cc, cflags, file, file2);
 	if (verbose) fprintf(stderr, "%s: %s\n", my_name, cmd);
 	if (system(cmd))
 		return -1;
-	sprintf(cmd, "strip %s.x", file);
+	sprintf(cmd, "strip %s", file2);
 	if (verbose) fprintf(stderr, "%s: %s\n", my_name, cmd);
 	if (system(cmd))
 		fprintf(stderr, "%s: never mind\n", my_name);
-	sprintf(cmd, "chmod go-r %s.x", file);
+	sprintf(cmd, "chmod ug=rwx,o=rx %s", file2);
 	if (verbose) fprintf(stderr, "%s: %s\n", my_name, cmd);
 	if (system(cmd))
 		fprintf(stderr, "%s: remove read permission\n", my_name);
